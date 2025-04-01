@@ -144,6 +144,9 @@ class EntryDialog(QDialog):
         self.setWindowTitle("Add Entry" if not entry else "Edit Entry")
         self.setModal(True)
         self._setup_ui()
+        
+        # Set focus to title input
+        self.title_input.setFocus()
     
     def _setup_ui(self):
         """Setup the user interface."""
@@ -154,7 +157,7 @@ class EntryDialog(QDialog):
         title_label = QLabel("Title:")
         self.title_input = QLineEdit()
         if self.entry:
-            self.title_input.setText(self.entry['title'])
+            self.title_input.setText(self.entry.get('title', ''))
         title_layout.addWidget(title_label)
         title_layout.addWidget(self.title_input)
         layout.addLayout(title_layout)
@@ -164,7 +167,7 @@ class EntryDialog(QDialog):
         username_label = QLabel("Username:")
         self.username_input = QLineEdit()
         if self.entry:
-            self.username_input.setText(self.entry['username'])
+            self.username_input.setText(self.entry.get('username', ''))
         username_layout.addWidget(username_label)
         username_layout.addWidget(self.username_input)
         layout.addLayout(username_layout)
@@ -174,9 +177,14 @@ class EntryDialog(QDialog):
         password_label = QLabel("Password:")
         self.password_input = QLineEdit()
         if self.entry:
-            self.password_input.setText(self.entry['password'])
+            self.password_input.setText(self.entry.get('password', ''))
+        self.password_input.setEchoMode(QLineEdit.Password)
+        self.show_password = QPushButton("Show")
+        self.show_password.setCheckable(True)
+        self.show_password.toggled.connect(self._toggle_password_visibility)
         password_layout.addWidget(password_label)
         password_layout.addWidget(self.password_input)
+        password_layout.addWidget(self.show_password)
         layout.addLayout(password_layout)
         
         # URL
@@ -184,7 +192,7 @@ class EntryDialog(QDialog):
         url_label = QLabel("URL:")
         self.url_input = QLineEdit()
         if self.entry:
-            self.url_input.setText(self.entry['url'])
+            self.url_input.setText(self.entry.get('url', ''))
         url_layout.addWidget(url_label)
         url_layout.addWidget(self.url_input)
         layout.addLayout(url_layout)
@@ -194,7 +202,7 @@ class EntryDialog(QDialog):
         notes_label = QLabel("Notes:")
         self.notes_input = QLineEdit()
         if self.entry:
-            self.notes_input.setText(self.entry['notes'])
+            self.notes_input.setText(self.entry.get('notes', ''))
         notes_layout.addWidget(notes_label)
         notes_layout.addWidget(self.notes_input)
         layout.addLayout(notes_layout)
@@ -202,19 +210,48 @@ class EntryDialog(QDialog):
         # Buttons
         button_layout = QHBoxLayout()
         self.save_btn = QPushButton("Save")
-        self.save_btn.clicked.connect(self.accept)
+        self.save_btn.clicked.connect(self._validate_and_accept)
         self.cancel_btn = QPushButton("Cancel")
         self.cancel_btn.clicked.connect(self.reject)
         button_layout.addWidget(self.save_btn)
         button_layout.addWidget(self.cancel_btn)
         layout.addLayout(button_layout)
     
+    def _toggle_password_visibility(self, checked):
+        """Toggle password visibility."""
+        self.password_input.setEchoMode(
+            QLineEdit.Normal if checked else QLineEdit.Password
+        )
+    
+    def _validate_and_accept(self):
+        """Validate the form before accepting."""
+        title = self.title_input.text().strip()
+        username = self.username_input.text().strip()
+        password = self.password_input.text()
+        
+        if not title:
+            QMessageBox.warning(self, "Error", "Title is required")
+            self.title_input.setFocus()
+            return
+            
+        if not username:
+            QMessageBox.warning(self, "Error", "Username is required")
+            self.username_input.setFocus()
+            return
+            
+        if not password:
+            QMessageBox.warning(self, "Error", "Password is required")
+            self.password_input.setFocus()
+            return
+            
+        self.accept()
+    
     def get_entry_data(self) -> dict:
         """Get the entry data from the form."""
         return {
-            'title': self.title_input.text(),
-            'username': self.username_input.text(),
+            'title': self.title_input.text().strip(),
+            'username': self.username_input.text().strip(),
             'password': self.password_input.text(),
-            'url': self.url_input.text(),
-            'notes': self.notes_input.text()
+            'url': self.url_input.text().strip(),
+            'notes': self.notes_input.text().strip()
         } 

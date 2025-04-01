@@ -22,6 +22,7 @@ class VaultManager:
         self._failed_attempts = 0
         self._last_attempt_time = 0
         self._locked = True
+        self._last_activity_time = time.time()  # Initialize with current time
         logger.debug(f"Vault path: {self.vault_path}")
         logger.debug(f"Audit log path: {self.audit_log_path}")
         logger.debug("VaultManager initialized successfully")
@@ -104,25 +105,37 @@ class VaultManager:
             self._log_audit('VAULT_CREATION', False)
             return False
     
-    def unlock_vault(self, master_password: str) -> bool:
-        """Unlock the vault with the given master password."""
-        logger.info("Attempting to unlock vault")
-        # Check for lockout
-        current_time = time.time()
-        if self._failed_attempts >= self.config.get('max_failed_attempts', 3):
-            if current_time - self._last_attempt_time < self.config.get('lockout_duration', 2):
-                logger.warning("Vault is locked due to too many failed attempts")
-                self._log_audit('UNLOCK_ATTEMPT_LOCKED', False)
-                return False
-            self._failed_attempts = 0
-            logger.info("Lockout period expired, resetting failed attempts")
-        
-        if not self.vault_path.exists():
-            logger.warning("Vault file does not exist")
+    def update_activity(self):
+        """Update the last activity timestamp."""
+        if not self._locked:  # Only update if vault is unlocked
+            self._last_activity_time = time.time()
+            logger.debug(f"Activity updated at {self._last_activity_time}")
+    
+    def should_auto_lock(self) -> bool:
+        """Check if vault should be auto-locked based on inactivity."""
+        if not self.is_unlocked():
             return False
             
-        # Read encrypted vault
+        timeout = self.config.get_auto_lock_timeout()  # Already in seconds
+        current_time = time.time()
+        time_since_activity = current_time - self._last_activity_time
+        
+        logger.debug(f"Time since last activity: {time_since_activity:.1f}s, Timeout: {timeout}s")
+        should_lock = time_since_activity >= timeout
+        
+        if should_lock:
+            logger.info(f"Auto-lock condition met: {time_since_activity:.1f}s elapsed (timeout: {timeout}s)")
+        
+        return should_lock
+    
+    def _load_vault(self) -> bool:
+        """Load encrypted vault data from file."""
         try:
+            logger.debug("Loading vault data from file")
+            if not self.vault_path.exists():
+                logger.error("Vault file does not exist")
+                return False
+                
             with open(self.vault_path, 'rb') as f:
                 data = f.read()
                 
@@ -131,42 +144,65 @@ class VaultManager:
                 return False
                 
             # Extract salt, IV and encrypted data
-            salt = data[:32]  # First 32 bytes are salt
+            self._salt = data[:32]  # First 32 bytes are salt
             iv = data[32:48]  # Next 16 bytes are IV
             encrypted_data = data[48:]  # Rest is encrypted data
             
-            # Derive key from password and salt
-            key = self._derive_key(master_password, salt)
-            aes = AES(key)
+            self._vault_data = {
+                'encrypted_data': encrypted_data,
+                'iv': iv
+            }
             
-            # Decrypt data
-            try:
-                decrypted_data = aes.decrypt(encrypted_data, iv)
-                vault_data = json.loads(decrypted_data.decode('utf-8'))
-                
-                # Verify vault data structure
-                if not isinstance(vault_data, dict) or 'entries' not in vault_data:
-                    logger.error("Invalid vault data structure")
+            logger.debug("Vault data loaded successfully")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to load vault: {str(e)}", exc_info=True)
+            return False
+    
+    def unlock_vault(self, master_password: str) -> bool:
+        """Unlock the vault with the master password."""
+        try:
+            logger.info("Attempting to unlock vault")
+            
+            # Load vault data if not already loaded
+            if self._vault_data is None:
+                if not self._load_vault():
                     return False
-                    
-                self._vault_data = vault_data
-                self._aes = aes
-                self._salt = salt
-                self._locked = False
-                self._failed_attempts = 0
-                logger.info("Vault unlocked successfully")
-                self._log_audit('VAULT_UNLOCK', True)
-                return True
-            except ValueError as e:
-                logger.error(f"Failed to decrypt vault: {e}")
+            
+            # Reset activity time when unlocking
+            self._last_activity_time = time.time()
+            
+            # Decrypt vault data
+            logger.debug("Attempting to decrypt vault data")
+            decrypted_data = self._decrypt_vault_data(master_password)
+            if decrypted_data is None:
+                logger.error("Failed to decrypt vault data - password may be incorrect")
                 self._failed_attempts += 1
-                self._last_attempt_time = current_time
+                self._last_attempt_time = time.time()
                 self._log_audit('VAULT_UNLOCK', False)
                 return False
+            
+            # Store the decrypted data and initialize AES
+            self._vault_data = decrypted_data
+            self._aes = AES(self._derive_key(master_password, self._salt))
+            self._locked = False
+            self._failed_attempts = 0
+            
+            # Ensure the vault data has the required structure
+            if 'entries' not in self._vault_data:
+                self._vault_data['entries'] = []
+            if 'version' not in self._vault_data:
+                self._vault_data['version'] = '1.0'
+                
+            logger.info("Vault unlocked successfully")
+            self._log_audit('VAULT_UNLOCK', True)
+            return True
+            
         except Exception as e:
+            logger.error(f"Failed to unlock vault: {str(e)}", exc_info=True)
             self._failed_attempts += 1
-            self._last_attempt_time = current_time
-            logger.error(f"Failed to unlock vault: {e}", exc_info=True)
+            self._last_attempt_time = time.time()
             self._log_audit('VAULT_UNLOCK', False)
             return False
     
@@ -211,18 +247,45 @@ class VaultManager:
             return False
             
         logger.info(f"Updating entry: {entry_id}")
-        for entry in self._vault_data['entries']:
-            if entry['id'] == entry_id:
-                entry.update(kwargs)
-                entry['updated_at'] = time.time()
-                success = self._save_vault()
-                if success:
-                    logger.info(f"Entry updated successfully: {entry_id}")
-                else:
-                    logger.error(f"Failed to update entry: {entry_id}")
-                return success
-        logger.warning(f"Entry not found: {entry_id}")
-        return False
+        try:
+            # Find the entry to update
+            entry_to_update = None
+            for entry in self._vault_data['entries']:
+                if entry['id'] == entry_id:
+                    entry_to_update = entry
+                    break
+                    
+            if not entry_to_update:
+                logger.warning(f"Entry not found: {entry_id}")
+                return False
+            
+            # Validate required fields
+            required_fields = {'title', 'username', 'password'}
+            if not all(field in kwargs for field in required_fields):
+                logger.error("Missing required fields in update data")
+                return False
+            
+            # Update the entry
+            entry_to_update.update({
+                'title': kwargs['title'],
+                'username': kwargs['username'],
+                'password': kwargs['password'],
+                'url': kwargs.get('url', ''),
+                'notes': kwargs.get('notes', ''),
+                'updated_at': time.time()
+            })
+            
+            # Save the changes
+            success = self._save_vault()
+            if success:
+                logger.info(f"Entry updated successfully: {entry_id}")
+            else:
+                logger.error(f"Failed to save updated entry: {entry_id}")
+            return success
+            
+        except Exception as e:
+            logger.error(f"Failed to update entry: {str(e)}", exc_info=True)
+            return False
     
     def delete_entry(self, entry_id: str) -> bool:
         """Delete an entry from the vault."""
@@ -250,6 +313,19 @@ class VaultManager:
         logger.debug(f"Retrieving {len(self._vault_data['entries'])} entries")
         return self._vault_data['entries']
     
+    def get_entry(self, entry_id: str) -> Optional[Dict]:
+        """Get a specific entry from the vault by ID."""
+        if self._locked:
+            logger.warning("Cannot get entry: vault is locked")
+            return None
+            
+        logger.debug(f"Retrieving entry: {entry_id}")
+        for entry in self._vault_data['entries']:
+            if entry['id'] == entry_id:
+                return entry
+        logger.warning(f"Entry not found: {entry_id}")
+        return None
+    
     def search_entries(self, query: str) -> List[Dict]:
         """Search entries in the vault."""
         if self._locked:
@@ -276,9 +352,15 @@ class VaultManager:
             
         try:
             logger.debug("Encrypting vault data for saving")
+            # Create a copy of vault data without any internal state
+            vault_data_to_save = {
+                'entries': self._vault_data['entries'],
+                'version': self._vault_data.get('version', '1.0')
+            }
+            
             # Encrypt vault data
             encrypted_data, iv = self._aes.encrypt(
-                json.dumps(self._vault_data).encode()
+                json.dumps(vault_data_to_save).encode()
             )
             
             # Save encrypted vault
@@ -379,4 +461,43 @@ class VaultManager:
                 logger.error(f"Failed to delete existing vault: {e}")
                 return False
         
-        return self.create_vault(master_password) 
+        return self.create_vault(master_password)
+    
+    def _decrypt_vault_data(self, master_password: str) -> Optional[Dict]:
+        """Decrypt vault data using the master password."""
+        try:
+            logger.debug("Starting vault decryption")
+            if not self._vault_data:
+                logger.error("No vault data to decrypt")
+                return None
+                
+            # Derive key from password and salt
+            logger.debug("Deriving key from password")
+            key = self._derive_key(master_password, self._salt)
+            
+            # Create AES instance
+            logger.debug("Creating AES instance")
+            aes = AES(key)
+            
+            # Decrypt data
+            logger.debug("Decrypting vault data")
+            decrypted_data = aes.decrypt(self._vault_data['encrypted_data'], self._vault_data['iv'])
+            
+            # Parse JSON
+            logger.debug("Parsing decrypted JSON data")
+            vault_data = json.loads(decrypted_data.decode('utf-8'))
+            
+            # Verify vault data structure
+            if not isinstance(vault_data, dict) or 'entries' not in vault_data:
+                logger.error("Invalid vault data structure")
+                return None
+                
+            logger.debug("Vault decryption successful")
+            return vault_data
+            
+        except ValueError as e:
+            logger.error(f"Failed to decrypt vault data: {str(e)}", exc_info=True)
+            return None
+        except Exception as e:
+            logger.error(f"Unexpected error during decryption: {str(e)}", exc_info=True)
+            return None 
