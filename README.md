@@ -2,6 +2,8 @@
 
 A highly secure, asynchronous password generator and manager with a graphical user interface, built in pure Python.
 
+![PassGen Password Manager](passgen.png)
+
 ## Features
 
 - Secure password generation with configurable options
