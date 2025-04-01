@@ -8,21 +8,24 @@ logger = logging.getLogger(__name__)
 
 class Config:
     def __init__(self, config_path: Optional[str] = None):
-        """Initialize configuration manager."""
-        logger.info("Initializing configuration manager")
-        self.config_path = Path(config_path) if config_path else Path.home() / '.passgen' / 'config.json'
-        self.config_dir = self.config_path.parent
-        self.config: Dict[str, Any] = {}
-        self.vault_file = self.config_dir / 'vault.enc'
-        self.audit_log = self.config_dir / 'audit.log'
+        """Initialize configuration."""
+        logger.info("Initializing configuration")
         
-        # Create config directory if it doesn't exist
+        # Set up paths
+        self.config_dir = Path.home() / '.passgen'
         self.config_dir.mkdir(parents=True, exist_ok=True)
         
-        self._load_config()
-        logger.debug(f"Configuration path: {self.config_path}")
-        logger.debug(f"Vault path: {self.vault_file}")
-        logger.debug(f"Audit log path: {self.audit_log}")
+        self.vault_file = self.config_dir / 'vault.enc'
+        self.audit_log = self.config_dir / 'audit.log'
+        self.config_path = Path(config_path) if config_path else self.config_dir / 'config.json'
+        
+        # Load or create configuration
+        if self.config_path.exists():
+            self._load_config()
+        else:
+            self._create_default_config()
+        
+        logger.info("Configuration initialized successfully")
     
     def _load_config(self):
         """Load configuration from file."""
@@ -54,7 +57,7 @@ class Config:
             'max_failed_attempts': 3,
             'lockout_duration': 300,  # 5 minutes
             'pbkdf2_iterations': 600000,
-            'auto_lock_timeout': 300,  # 5 minutes
+            'auto_lock_timeout': 15,  # 15 minutes
             'clipboard_timeout': 30,  # 30 seconds
             'theme': 'default',
             'language': 'en'
@@ -117,7 +120,8 @@ class Config:
     def get_auto_lock_timeout(self) -> int:
         """Get auto-lock timeout in seconds."""
         logger.debug("Getting auto-lock timeout")
-        return self.config.get('auto_lock_timeout', 300)
+        # Convert minutes to seconds
+        return self.config.get('auto_lock_timeout', 15) * 60
     
     def get_clipboard_timeout(self) -> int:
         """Get clipboard timeout in seconds."""

@@ -115,7 +115,9 @@ class MainWindow(QMainWindow):
         """Handle vault unlocked event."""
         logger.info("Vault unlocked")
         # Reset and start auto-lock timer
-        self.auto_lock_timer.start(self.config.get_auto_lock_timeout() * 1000)
+        timeout = self.config.get_auto_lock_timeout()  # Already in seconds from Config
+        self.auto_lock_timer.start(timeout)
+        logger.debug(f"Auto-lock timer started with {timeout//60} minutes timeout")
     
     def closeEvent(self, event):
         """Handle window close event."""

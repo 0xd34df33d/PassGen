@@ -248,9 +248,9 @@ class VaultTab(QWidget):
                 self._set_buttons_enabled(True)
                 self._update_entries()
                 self.vault_unlocked.emit()
-                timeout = self.config.get('auto_lock_timeout', 15) * 60 * 1000
+                timeout = self.config.get_auto_lock_timeout()  # Already in seconds from Config
                 self.auto_lock_timer.start(timeout)
-                logger.debug(f"Auto-lock timer started with {timeout//60000} minutes timeout")
+                logger.debug(f"Auto-lock timer started with {timeout//60} minutes timeout")
             else:
                 logger.warning("Failed to unlock vault")
                 QMessageBox.warning(
@@ -427,9 +427,9 @@ class VaultTab(QWidget):
         self._set_buttons_enabled(True)
         self._update_entries()
         self.vault_unlocked.emit()
-        timeout = self.config.get('auto_lock_timeout', 15) * 60 * 1000
+        timeout = self.config.get_auto_lock_timeout()  # Already in seconds from Config
         self.auto_lock_timer.start(timeout)
-        logger.debug(f"Auto-lock timer started with {timeout//60000} minutes timeout")
+        logger.debug(f"Auto-lock timer started with {timeout//60} minutes timeout")
 
     def update_language(self, translations):
         """Update the language of all UI elements."""
@@ -450,17 +450,17 @@ class VaultTab(QWidget):
         """Reset auto-lock timer on user activity."""
         super().mousePressEvent(event)
         if self.vault_manager.is_unlocked():
-            timeout = self.config.get('auto_lock_timeout', 15) * 60 * 1000
+            timeout = self.config.get_auto_lock_timeout()  # Already in seconds from Config
             self.auto_lock_timer.start(timeout)
-            logger.debug("Auto-lock timer reset due to user activity")
+            logger.debug(f"Auto-lock timer reset to {timeout//60} minutes due to user activity")
 
     def keyPressEvent(self, event):
         """Reset auto-lock timer on user activity."""
         super().keyPressEvent(event)
         if self.vault_manager.is_unlocked():
-            timeout = self.config.get('auto_lock_timeout', 15) * 60 * 1000
+            timeout = self.config.get_auto_lock_timeout()  # Already in seconds from Config
             self.auto_lock_timer.start(timeout)
-            logger.debug("Auto-lock timer reset due to user activity")
+            logger.debug(f"Auto-lock timer reset to {timeout//60} minutes due to user activity")
 
 class SettingsTab(QWidget):
     def __init__(self, vault_manager, config):
