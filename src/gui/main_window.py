@@ -4,10 +4,12 @@ from PyQt5.QtWidgets import (
     QMessageBox, QInputDialog, QAction
 )
 from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtGui import QIcon
 from src.gui.tabs import GeneratorTab, VaultTab, SettingsTab
 from src.core.vault_manager import VaultManager
 from src.core.password_generator import PasswordGenerator
 from src.utils.config import Config
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +50,14 @@ class MainWindow(QMainWindow):
         # Set window properties
         self.setWindowTitle("PassGen Password Manager")
         self.setMinimumSize(800, 600)
+        
+        # Set window icon
+        icon_path = os.path.join(os.path.dirname(__file__), '..', 'assets', 'passgen.ico')
+        if os.path.exists(icon_path):
+            self.setWindowIcon(QIcon(icon_path))
+            logger.info(f"Window icon set from {icon_path}")
+        else:
+            logger.warning(f"Window icon not found at {icon_path}")
         
         # Setup auto-lock timer
         logger.debug("Setting up auto-lock timer")
