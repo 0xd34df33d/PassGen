@@ -63,7 +63,7 @@ class MainWindow(QMainWindow):
         logger.debug("Setting up auto-lock timer")
         self.auto_lock_timer = QTimer()
         self.auto_lock_timer.timeout.connect(self.auto_lock)
-        self.auto_lock_timer.start(self.config.get_auto_lock_timeout() * 1000)
+        self.auto_lock_timer.start(self.config.get_auto_lock_timeout() * 1000)  # Convert seconds to milliseconds
         
         logger.info("Main window initialized successfully")
     
@@ -99,7 +99,8 @@ class MainWindow(QMainWindow):
         logger.info("Auto-locking vault due to inactivity")
         if not self.vault_manager._locked:
             self.vault_manager.lock_vault()
-            self.vault_tab.on_vault_locked()
+            self.vault_tab._set_buttons_enabled(False)
+            self.vault_tab.entries_tree.clear()
             QMessageBox.information(
                 self,
                 "Vault Locked",
@@ -116,7 +117,7 @@ class MainWindow(QMainWindow):
         logger.info("Vault unlocked")
         # Reset and start auto-lock timer
         timeout = self.config.get_auto_lock_timeout()  # Already in seconds from Config
-        self.auto_lock_timer.start(timeout)
+        self.auto_lock_timer.start(timeout * 1000)  # Convert seconds to milliseconds
         logger.debug(f"Auto-lock timer started with {timeout//60} minutes timeout")
     
     def closeEvent(self, event):

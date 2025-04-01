@@ -186,8 +186,6 @@ class VaultTab(QWidget):
         logger.info("Initializing vault tab")
         self.vault_manager = vault_manager
         self.config = Config()
-        self.auto_lock_timer = QTimer()
-        self.auto_lock_timer.timeout.connect(self._lock_vault)
         self._setup_ui()
         logger.info("Vault tab initialized successfully")
     
@@ -248,9 +246,6 @@ class VaultTab(QWidget):
                 self._set_buttons_enabled(True)
                 self._update_entries()
                 self.vault_unlocked.emit()
-                timeout = self.config.get_auto_lock_timeout()  # Already in seconds from Config
-                self.auto_lock_timer.start(timeout)
-                logger.debug(f"Auto-lock timer started with {timeout//60} minutes timeout")
             else:
                 logger.warning("Failed to unlock vault")
                 QMessageBox.warning(
@@ -403,8 +398,6 @@ class VaultTab(QWidget):
         self.vault_manager.lock_vault()
         self._set_buttons_enabled(False)
         self.entries_tree.clear()
-        self.auto_lock_timer.stop()
-        self.vault_locked.emit()
     
     def _set_buttons_enabled(self, enabled: bool):
         """Enable or disable buttons based on vault state."""
@@ -415,21 +408,17 @@ class VaultTab(QWidget):
         self.lock_btn.setEnabled(enabled)
         self.unlock_btn.setEnabled(not enabled)
     
-    def on_vault_locked(self):
-        """Handle vault locked event."""
-        logger.info("Vault locked")
-        self._set_buttons_enabled(False)
-        self.entries_tree.clear()
-    
-    def on_vault_unlocked(self):
-        """Handle vault unlocked event."""
-        logger.info("Vault unlocked")
-        self._set_buttons_enabled(True)
-        self._update_entries()
-        self.vault_unlocked.emit()
-        timeout = self.config.get_auto_lock_timeout()  # Already in seconds from Config
-        self.auto_lock_timer.start(timeout)
-        logger.debug(f"Auto-lock timer started with {timeout//60} minutes timeout")
+    def mousePressEvent(self, event):
+        """Reset auto-lock timer on user activity."""
+        super().mousePressEvent(event)
+        if self.vault_manager.is_unlocked():
+            self.vault_unlocked.emit()  # Signal MainWindow to reset timer
+
+    def keyPressEvent(self, event):
+        """Reset auto-lock timer on user activity."""
+        super().keyPressEvent(event)
+        if self.vault_manager.is_unlocked():
+            self.vault_unlocked.emit()  # Signal MainWindow to reset timer
 
     def update_language(self, translations):
         """Update the language of all UI elements."""
@@ -445,22 +434,6 @@ class VaultTab(QWidget):
             self.unlock_btn.setText(translations.get("Unlock Vault", "Unlock Vault"))
         except Exception as e:
             logger.error(f"Failed to update vault tab language: {str(e)}")
-
-    def mousePressEvent(self, event):
-        """Reset auto-lock timer on user activity."""
-        super().mousePressEvent(event)
-        if self.vault_manager.is_unlocked():
-            timeout = self.config.get_auto_lock_timeout()  # Already in seconds from Config
-            self.auto_lock_timer.start(timeout)
-            logger.debug(f"Auto-lock timer reset to {timeout//60} minutes due to user activity")
-
-    def keyPressEvent(self, event):
-        """Reset auto-lock timer on user activity."""
-        super().keyPressEvent(event)
-        if self.vault_manager.is_unlocked():
-            timeout = self.config.get_auto_lock_timeout()  # Already in seconds from Config
-            self.auto_lock_timer.start(timeout)
-            logger.debug(f"Auto-lock timer reset to {timeout//60} minutes due to user activity")
 
 class SettingsTab(QWidget):
     def __init__(self, vault_manager, config):
@@ -524,7 +497,7 @@ class SettingsTab(QWidget):
         timeout_label = QLabel("Auto-lock timeout (minutes):")
         self.timeout_spinbox = QSpinBox()
         self.timeout_spinbox.setRange(1, 60)
-        self.timeout_spinbox.setValue(self.config.get('auto_lock_timeout', 15))
+        self.timeout_spinbox.setValue(self.config.get('auto_lock_timeout', 15))  # Value is in minutes
         self.timeout_spinbox.valueChanged.connect(self._update_timeout)
         timeout_layout.addWidget(timeout_label)
         timeout_layout.addWidget(self.timeout_spinbox)
