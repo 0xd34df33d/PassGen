@@ -6,7 +6,7 @@ from PyQt5.QtWidgets import (
     QInputDialog, QSpinBox, QComboBox, QMenu,
     QGroupBox, QTabWidget, QDialog, QApplication
 )
-from PyQt5.QtCore import Qt, pyqtSignal, QPoint
+from PyQt5.QtCore import Qt, pyqtSignal, QPoint, QTimer
 from PyQt5.QtGui import QPalette, QColor
 from src.core.vault_manager import VaultManager
 from src.core.password_generator import PasswordGenerator
@@ -21,6 +21,7 @@ class GeneratorTab(QWidget):
         super().__init__()
         logger.info("Initializing password generator tab")
         self.password_generator = password_generator
+        self.config = Config()
         self._setup_ui()
         logger.info("Password generator tab initialized successfully")
     
@@ -106,11 +107,14 @@ class GeneratorTab(QWidget):
         self.passphrase_preview.setReadOnly(True)
         layout.addWidget(self.passphrase_preview)
         
+        # Status label
+        self.status_label = QLabel()
+        layout.addWidget(self.status_label)
+        
         logger.debug("Generator tab UI setup complete")
     
     def _generate_password(self):
-        """Generate a new password."""
-        logger.info("Generating new password")
+        """Generate and display a password based on current settings."""
         try:
             password = self.password_generator.generate_password(
                 length=self.length_slider.value(),
@@ -120,38 +124,35 @@ class GeneratorTab(QWidget):
                 use_symbols=self.use_symbols.isChecked(),
                 avoid_ambiguous=self.avoid_ambiguous.isChecked()
             )
-            
             self.password_preview.setText(password)
-            entropy = self.password_generator.calculate_entropy(password)
-            self.entropy_label.setText(f"Entropy: {entropy:.1f} bits")
-            logger.info("Password generated successfully")
+            QApplication.clipboard().setText(password)
+            timeout = self.config.get('clear_clipboard_timeout', 30) * 1000
+            self.status_label.setText(f"Password copied to clipboard! Will be cleared in {timeout//1000} seconds.")
+            QTimer.singleShot(timeout, lambda: self._clear_clipboard(password))
         except Exception as e:
-            logger.error(f"Failed to generate password: {e}", exc_info=True)
-            QMessageBox.critical(
-                self,
-                "Error",
-                "Failed to generate password. Please try again."
-            )
+            self.password_preview.setText(f"Error: {str(e)}")
     
     def _generate_passphrase(self):
-        """Generate a new passphrase."""
-        logger.info("Generating new passphrase")
+        """Generate and display a passphrase based on current settings."""
         try:
             passphrase = self.password_generator.generate_passphrase(
                 word_count=self.word_count.value(),
                 separator=self.separator.currentText(),
                 capitalize=self.capitalize.isChecked()
             )
-            
             self.passphrase_preview.setText(passphrase)
-            logger.info("Passphrase generated successfully")
+            QApplication.clipboard().setText(passphrase)
+            timeout = self.config.get('clear_clipboard_timeout', 30) * 1000
+            self.status_label.setText(f"Passphrase copied to clipboard! Will be cleared in {timeout//1000} seconds.")
+            QTimer.singleShot(timeout, lambda: self._clear_clipboard(passphrase))
         except Exception as e:
-            logger.error(f"Failed to generate passphrase: {e}", exc_info=True)
-            QMessageBox.critical(
-                self,
-                "Error",
-                "Failed to generate passphrase. Please try again."
-            )
+            self.passphrase_preview.setText(f"Error: {str(e)}")
+
+    def _clear_clipboard(self, text):
+        """Clear the clipboard if it still contains the specified text."""
+        if QApplication.clipboard().text() == text:
+            QApplication.clipboard().clear()
+            self.status_label.setText("Clipboard cleared for security.")
 
     def update_language(self, translations):
         """Update the language of all UI elements."""
@@ -184,6 +185,9 @@ class VaultTab(QWidget):
         super().__init__()
         logger.info("Initializing vault tab")
         self.vault_manager = vault_manager
+        self.config = Config()
+        self.auto_lock_timer = QTimer()
+        self.auto_lock_timer.timeout.connect(self._lock_vault)
         self._setup_ui()
         logger.info("Vault tab initialized successfully")
     
@@ -244,6 +248,9 @@ class VaultTab(QWidget):
                 self._set_buttons_enabled(True)
                 self._update_entries()
                 self.vault_unlocked.emit()
+                timeout = self.config.get('auto_lock_timeout', 15) * 60 * 1000
+                self.auto_lock_timer.start(timeout)
+                logger.debug(f"Auto-lock timer started with {timeout//60000} minutes timeout")
             else:
                 logger.warning("Failed to unlock vault")
                 QMessageBox.warning(
@@ -396,6 +403,7 @@ class VaultTab(QWidget):
         self.vault_manager.lock_vault()
         self._set_buttons_enabled(False)
         self.entries_tree.clear()
+        self.auto_lock_timer.stop()
         self.vault_locked.emit()
     
     def _set_buttons_enabled(self, enabled: bool):
@@ -419,6 +427,9 @@ class VaultTab(QWidget):
         self._set_buttons_enabled(True)
         self._update_entries()
         self.vault_unlocked.emit()
+        timeout = self.config.get('auto_lock_timeout', 15) * 60 * 1000
+        self.auto_lock_timer.start(timeout)
+        logger.debug(f"Auto-lock timer started with {timeout//60000} minutes timeout")
 
     def update_language(self, translations):
         """Update the language of all UI elements."""
@@ -434,6 +445,22 @@ class VaultTab(QWidget):
             self.unlock_btn.setText(translations.get("Unlock Vault", "Unlock Vault"))
         except Exception as e:
             logger.error(f"Failed to update vault tab language: {str(e)}")
+
+    def mousePressEvent(self, event):
+        """Reset auto-lock timer on user activity."""
+        super().mousePressEvent(event)
+        if self.vault_manager.is_unlocked():
+            timeout = self.config.get('auto_lock_timeout', 15) * 60 * 1000
+            self.auto_lock_timer.start(timeout)
+            logger.debug("Auto-lock timer reset due to user activity")
+
+    def keyPressEvent(self, event):
+        """Reset auto-lock timer on user activity."""
+        super().keyPressEvent(event)
+        if self.vault_manager.is_unlocked():
+            timeout = self.config.get('auto_lock_timeout', 15) * 60 * 1000
+            self.auto_lock_timer.start(timeout)
+            logger.debug("Auto-lock timer reset due to user activity")
 
 class SettingsTab(QWidget):
     def __init__(self, vault_manager, config):
